@@ -1,106 +1,230 @@
-# Load required libraries
-library(ggplot2)
-library(dplyr)
+# install.packages(c("tidyverse", "caret", "e1071", "nnet", "corrplot"))
+
+# Load libraries
+library(tidyverse)
+install.packages("tidyverse")
 library(caret)
 library(e1071)
+library(nnet)
 library(corrplot)
-library(readr)
-library(caTools)
-library(randomForest)
-library(ROCR)
-library(pROC)
+install.packages("nnet")   # Only once
+library(nnet)              # Every R session
+
+
+data <- read.csv("C:\\Users\\Admin\\Desktop\\travel+reviews\\tripadvisor_review.csv")
+
+data <- data[ , -1]
+
+# Compute average across the 10 rating categories
+avg_rating <- rowMeans(data)
+
+# Create rating bins
+data$Overall_Rating <- cut(
+  avg_rating,
+  breaks = c(1.2, 1.6, 1.85, 2.25),
+  labels = c("1", "2", "3"),
+  right = TRUE,
+  include.lowest = TRUE
+)
+
+# Convert to factor
+data$Overall_Rating <- as.factor(data$Overall_Rating)
+
+# Check outputs
+table(data$Overall_Rating)
+summary(avg_rating)
+
+table(data$Overall_Rating)
+
+library(caret)
+
+# Re-scale the 10 feature columns only (1:10)
+features_scaled <- scale(data[ , 1:10])
+
+# Combine scaled features + Overall_Rating column
+data_scaled <- as.data.frame(cbind(features_scaled, Overall_Rating = data$Overall_Rating))
+
+# Make sure target is still a factor
+data_scaled$Overall_Rating <- as.factor(data_scaled$Overall_Rating)
+
+# Confirm structure
+str(data_scaled)
+
+library(caret)
+
+set.seed(42)
+
+# Stratified sampling by class
+train_index <- createDataPartition(data_scaled$Overall_Rating, p = 0.8, list = FALSE)
+
+# Train and test sets
+train_data <- data_scaled[train_index, ]
+test_data <- data_scaled[-train_index, ]
+
+# Check class balance
+table(train_data$Overall_Rating)
+table(test_data$Overall_Rating)
+
 library(nnet)
 
-# Load the dataset
-df <- read_csv("tripadvisor_review.csv")
+# Train the model
+log_model <- multinom(Overall_Rating ~ ., data = train_data)
 
-# View summary of the dataset
-summary(df)
+# Predict on the test set
+log_preds <- predict(log_model, newdata = test_data)
 
-# Check for missing values
-sum(is.na(df))
+# Evaluate with confusion matrix
+confusionMatrix(log_preds, test_data$Overall_Rating)
 
-# Data Preprocessing - Normalization
-normalize <- function(x) {
-  return ((x - min(x)) / (max(x) - min(x)))
-}
+# Predict on the test set
+log_preds <- predict(log_model, newdata = test_data)
 
-df_normalized <- as.data.frame(lapply(df[, -1], normalize))
+# Evaluate with confusion matrix
+confusionMatrix(log_preds, test_data$Overall_Rating)
 
-df$Category <- as.factor(df$Category)  # Convert categorical variable to factor
+library(e1071)
 
-# Splitting the dataset into Training and Test sets
+# Train SVM with radial kernel
+svm_model <- svm(Overall_Rating ~ ., data = train_data, kernel = "radial")
+
+# Predict
+svm_preds <- predict(svm_model, newdata = test_data)
+
+# Align factor levels
+svm_preds <- factor(svm_preds, levels = c("1", "2", "3"))
+test_labels <- factor(test_data$Overall_Rating, levels = c("1", "2", "3"))
+
+# Evaluate
+confusionMatrix(svm_preds, test_labels)
+
+# Tune SVM parameters
+set.seed(42)
+tuned_svm <- tune(
+  svm,
+  Overall_Rating ~ .,
+  data = train_data,
+  kernel = "radial",
+  ranges = list(cost = c(0.1, 1, 10), gamma = c(0.01, 0.1, 1))
+)
+
+# Best model
+best_svm <- tuned_svm$best.model
+
+# Predict on test set
+svm_tuned_preds <- predict(best_svm, newdata = test_data)
+
+# Evaluate
+svm_tuned_preds <- factor(svm_tuned_preds, levels = c("1", "2", "3"))
+confusionMatrix(svm_tuned_preds, test_data$Overall_Rating)
+
+install.packages("randomForest")
+library(randomForest)
+
+# Set seed for reproducibility
 set.seed(123)
-split <- sample.split(df$Category, SplitRatio = 0.8)
-training_set <- subset(df, split == TRUE)
-test_set <- subset(df, split == FALSE)
 
-# Exploratory Data Analysis
-# Correlation Matrix
-cor_matrix <- cor(df_normalized)
-corrplot(cor_matrix, method="color", type="upper", tl.cex = 0.7)
+# Train Random Forest
+rf_model <- randomForest(
+  Overall_Rating ~ .,
+  data = train_data_smote,
+  ntree = 500,        # number of trees
+  mtry = 3,           # number of variables tried at each split (can tune)
+  importance = TRUE   # track feature importance
+)
+install.packages("smotefamily")
+library(smotefamily)
 
-# Distribution of Ratings
-ggplot(df, aes(x = Category)) +
-  geom_bar(fill = "steelblue") +
+# Prepare training data
+train_data_numeric <- train_data
+train_data_numeric$Overall_Rating <- as.numeric(as.character(train_data$Overall_Rating))
+
+# Separate features and target
+X <- train_data_numeric[ , 1:10]              # features
+y <- train_data_numeric$Overall_Rating        # target as numeric
+
+# Apply SMOTE
+library(smotefamily)
+smote_output <- SMOTE(X, y, K = 5, dup_size = 2)  # 200% oversampling
+
+# Combine features + class
+train_data_smote <- smote_output$data
+train_data_smote$Overall_Rating <- as.factor(round(train_data_smote$class))
+train_data_smote$class <- NULL
+
+# Check class balance
+table(train_data_smote$Overall_Rating)
+
+# Convert class column to numeric before rounding
+train_data_smote$class <- as.numeric(as.character(train_data_smote$class))
+
+# Round and convert to factor
+train_data_smote$Overall_Rating <- as.factor(round(train_data_smote$class))
+
+# Drop the old class column
+train_data_smote$class <- NULL
+
+# Check class balance
+table(train_data_smote$Overall_Rating)
+
+# Load Random Forest library
+install.packages("randomForest")  # if not already installed
+library(randomForest)
+
+# Set seed and train the model
+set.seed(123)
+rf_model <- randomForest(
+  Overall_Rating ~ .,
+  data = train_data_smote,
+  ntree = 500,        # number of trees
+  mtry = 3,           # number of variables tried at each split
+  importance = TRUE   # enables variable importance plotting
+)
+
+# Predict on test set
+rf_preds <- predict(rf_model, newdata = test_data)
+
+# Match factor levels
+rf_preds <- factor(rf_preds, levels = c("1", "2", "3"))
+test_labels <- factor(test_data$Overall_Rating, levels = c("1", "2", "3"))
+
+# Evaluate
+library(caret)
+confusionMatrix(rf_preds, test_labels)
+
+# Load library
+library(ggplot2)
+
+# Create a data frame with model comparison
+model_results <- data.frame(
+  Model = c("Logistic Regression", "Tuned SVM", "Random Forest (SMOTE)"),
+  Accuracy = c(99.49, 96.92, 90.26)
+)
+
+# Plot
+ggplot(model_results, aes(x = Model, y = Accuracy, fill = Model)) +
+  geom_bar(stat = "identity", width = 0.6) +
+  geom_text(aes(label = paste0(Accuracy, "%")), vjust = -0.5, size = 4.5) +
+  ylim(0, 105) +
   theme_minimal() +
-  labs(title = "Distribution of Ratings", x = "Categories", y = "Count")
+  labs(title = "Model Accuracy Comparison",
+       y = "Accuracy (%)", x = "") +
+  theme(legend.position = "none",
+        text = element_text(size = 12),
+        plot.title = element_text(hjust = 0.5, face = "bold"))
 
-# Boxplot to check for outliers
-ggplot(df, aes(x = Category, y = df_normalized[,1])) +
-  geom_boxplot(fill = "lightblue") +
+
+# Create confusion matrix
+cm_log <- confusionMatrix(log_preds, test_data$Overall_Rating)
+
+# Convert to table
+cm_log_df <- as.data.frame(cm_log$table)
+
+# Plot
+ggplot(cm_log_df, aes(x = Reference, y = Prediction)) +
+  geom_tile(aes(fill = Freq), color = "white") +
+  geom_text(aes(label = Freq), size = 6) +
+  scale_fill_gradient(low = "#D6EAF8", high = "#1F618D") +
   theme_minimal() +
-  labs(title = "Boxplot of Ratings by Category", x = "Category", y = "Ratings")
-
-# Model Implementation
-# Support Vector Machine (SVM)
-svm_model <- svm(Category ~ ., data = training_set, kernel = "linear", probability = TRUE)
-svm_predictions <- predict(svm_model, test_set, probability = TRUE)
-confusionMatrix(svm_predictions, test_set$Category)
-
-# Logistic Regression Model
-logistic_model <- train(Category ~ ., data = training_set, method = "glm", family = "binomial")
-logistic_predictions <- predict(logistic_model, test_set)
-confusionMatrix(logistic_predictions, test_set$Category)
-
-# Random Forest Model
-rf_model <- randomForest(Category ~ ., data = training_set, ntree = 100)
-rf_predictions <- predict(rf_model, test_set)
-confusionMatrix(rf_predictions, test_set$Category)
-
-# Neural Network Model
-nn_model <- nnet(Category ~ ., data = training_set, size = 5, maxit = 200)
-nn_predictions <- predict(nn_model, test_set, type = "class")
-confusionMatrix(nn_predictions, test_set$Category)
-
-# Model Evaluation
-# Accuracy Comparison
-svm_accuracy <- mean(svm_predictions == test_set$Category)
-logistic_accuracy <- mean(logistic_predictions == test_set$Category)
-rf_accuracy <- mean(rf_predictions == test_set$Category)
-nn_accuracy <- mean(nn_predictions == test_set$Category)
-
-accuracy_df <- data.frame(Model = c("SVM", "Logistic Regression", "Random Forest", "Neural Network"), 
-                          Accuracy = c(svm_accuracy, logistic_accuracy, rf_accuracy, nn_accuracy))
-
-print(accuracy_df)
-
-# Visualizing Model Performance
-ggplot(accuracy_df, aes(x = Model, y = Accuracy, fill = Model)) +
-  geom_bar(stat = "identity") +
-  theme_minimal() +
-  labs(title = "Model Accuracy Comparison", y = "Accuracy", x = "Model")
-
-# ROC Curve Comparison
-svm_prob <- attributes(predict(svm_model, test_set, probability = TRUE))$probabilities[,2]
-logistic_prob <- predict(logistic_model, test_set, type = "prob")[,2]
-rf_prob <- predict(rf_model, test_set, type = "prob")[,2]
-
-roc_svm <- roc(test_set$Category, svm_prob)
-roc_logistic <- roc(test_set$Category, logistic_prob)
-roc_rf <- roc(test_set$Category, rf_prob)
-
-plot(roc_svm, col = "blue", main = "ROC Curve Comparison")
-lines(roc_logistic, col = "red")
-lines(roc_rf, col = "green")
-legend("bottomright", legend = c("SVM", "Logistic Regression", "Random Forest"), col = c("blue", "red", "green"), lwd = 2)
+  labs(title = "Logistic Regression – Confusion Matrix",
+       x = "Actual Class", y = "Predicted Class") +
+  theme(plot.title = element_text(hjust = 0.5, face = "bold"))
