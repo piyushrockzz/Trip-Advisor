@@ -7,7 +7,7 @@ library(caret)
 library(e1071)
 library(nnet)
 library(corrplot)
-install.packages("nnet")   # Only once
+install.packages("nnet")   
 library(nnet)              # Every R session
 
 
