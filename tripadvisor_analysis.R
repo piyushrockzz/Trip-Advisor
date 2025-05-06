@@ -8,7 +8,7 @@ library(e1071)
 library(nnet)
 library(corrplot)
 install.packages("nnet")   
-library(nnet)              # Every R session
+library(nnet)             
 
 
 data <- read.csv("C:\\Users\\Admin\\Desktop\\travel+reviews\\tripadvisor_review.csv")
